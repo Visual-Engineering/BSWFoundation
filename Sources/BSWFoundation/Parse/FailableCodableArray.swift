@@ -11,13 +11,26 @@ public struct FailableCodableArray<Element : Decodable> : Decodable {
     }
 }
 
+extension FailableCodableArray: DateDecodingStrategyProvider where Element: DateDecodingStrategyProvider {
+    public static var dateDecodingStrategy: DateFormatter {
+        return Element.dateDecodingStrategy
+    }
+}
+
 private struct FailableDecodable<Base : Decodable> : Decodable {
 
     let base: Base?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        self.base = try? container.decode(Base.self)
+        self.base = {
+            do {
+                return try container.decode(Base.self)
+            } catch let error {
+                print(error)
+                return nil
+            }
+        }()
     }
 }
 

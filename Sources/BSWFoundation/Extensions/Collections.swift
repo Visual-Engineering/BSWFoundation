@@ -67,3 +67,72 @@ public extension Dictionary {
         }
     }
 }
+
+public struct SelectableArray<T>: Collection {
+    public private(set) var selectedIndex: Int?
+    public private(set) var options: [T]
+
+    public enum SelectableArrayError: Swift.Error {
+        case outOfBoundsIndex
+    }
+    
+    public init(options: [T], selectedIndex: Int? = nil) {
+        self.options = options
+        self.selectedIndex = selectedIndex
+    }
+
+    public static func empty() -> SelectableArray<T> {
+        return .init(options: [])
+    }
+    
+    @discardableResult
+    public mutating func select(atIndex: Int) -> T {
+        selectedIndex = atIndex
+        return options[atIndex]
+    }
+    
+    public mutating func removeSelection() {
+        selectedIndex = nil
+    }
+
+    public mutating func appendOption(_ option: T, andSelectIt: Bool = false) {
+        options.append(option)
+        if andSelectIt {
+            selectedIndex = (options.count - 1)
+        }
+    }
+
+    public func appendingOption(_ option: T, andSelectIt: Bool = false) -> SelectableArray<T> {
+        var array = SelectableArray(options: options + [option])
+        if andSelectIt {
+            array.selectedIndex = (array.options.count - 1)
+        }
+        return array
+    }
+
+    public var selectedElement: T? {
+        guard let selectedIndex = selectedIndex else { return nil }
+        return options[selectedIndex]
+    }
+    
+    // MARK: Collection
+    
+    public typealias Index = Array<T>.Index
+    public typealias Element = Array<T>.Element
+    public var startIndex: Index { return options.startIndex }
+    public var endIndex: Index { return options.endIndex }
+    
+    // Required subscript, based on a dictionary index
+    public subscript(index: Index) -> Iterator.Element {
+        get { return options[index] }
+    }
+
+    // Method that returns the next index when iterating
+    public func index(after i: Index) -> Index {
+        return options.index(after: i)
+    }
+}
+
+extension SelectableArray: Equatable where T: Equatable {
+    
+}

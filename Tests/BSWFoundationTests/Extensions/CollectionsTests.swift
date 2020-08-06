@@ -45,4 +45,43 @@ class CollectionTests: XCTestCase {
         XCTAssertNotNil(dict[3])
         XCTAssertNil(dict[42])
     }
+    
+    func testSelectableArray() {
+        let values = [0,1,2,3]
+        var array = SelectableArray<Int>(options: values)
+        array.select(atIndex: 2)
+        XCTAssert(array.selectedElement == 2)
+        array.enumerated().forEach { (offset, _) in
+            XCTAssert(array[offset] == values[offset])
+        }
+        array.appendOption(4, andSelectIt: true)
+        XCTAssert(array.selectedElement == 4)
+    }
+    
+    func testSelectableArrayImmutable() {
+        let values = [0,1,2,3]
+        let array = SelectableArray<Int>(options: values)
+        let newArray = array.appendingOption(4, andSelectIt: true)
+        XCTAssert(newArray.selectedElement == 4)
+    }
+
+    func testSelectableArrayEquatable() {
+        let array1 = SelectableArray<Int>(options: [0,1,2,3])
+        let array2 = SelectableArray<Int>(options: [4,1,2,3])
+        XCTAssert(array1 != array2)
+    }
+    
+    func testSelectableArrayEquatable2() {
+        var array1 = SelectableArray<Int>(options: [0,1,2,3])
+        array1.select(atIndex: 0)
+        let array2 = SelectableArray<Int>(options: [0,1,2,3])
+        XCTAssert(array1 != array2)
+    }
+    
+    func testRemoveSelectionSelectableArray() {
+        var array1 = SelectableArray<Int>(options: [0,1,2,3])
+        array1.select(atIndex: 0)
+        array1.removeSelection()
+        XCTAssertNil(array1.selectedElement)
+    }
 }

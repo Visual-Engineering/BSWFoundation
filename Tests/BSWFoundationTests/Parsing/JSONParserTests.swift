@@ -44,7 +44,7 @@ class JSONParserTests: XCTestCase {
         }
 
         let sampleString = """
-        {\n  \"id\" : \"123456\",\n  \"name\" : \"Hola\",\n  \"amount\" : 5678\n}
+        {\"id\":\"123456\",\"name\":\"Hola\",\"amount\":5678}
         """
         XCTAssert(string == sampleString)
     }
@@ -59,12 +59,11 @@ class JSONParserTests: XCTestCase {
     }
 
     func testParsingUsingCombine() throws {
-        if #available(OSX 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *) {
-            let model = SampleModel(identity: "123456", name: "Hola", amount: 5678)
-            let jsonData = try JSONEncoder().encode(model)
-            let publisher: CombineTask<SampleModel> = JSONParser.parseData(jsonData)
-            let _ = try self.waitAndExtractValue(publisher)
-        }
+        guard #available(OSX 10.15, iOS 13.0, tvOS 13.0, watchOS 6.0, *) else { return }
+        let model = SampleModel(identity: "123456", name: "Hola", amount: 5678)
+        let jsonData = try JSONEncoder().encode(model)
+        let publisher: CombineTask<SampleModel> = JSONParser.parseData(jsonData)
+        let _ = try self.waitAndExtractValue(publisher)
     }
 }
 

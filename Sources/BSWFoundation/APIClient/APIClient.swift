@@ -6,6 +6,9 @@
 import Foundation
 import Task
 import Deferred
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public protocol APIClientNetworkFetcher {
     func fetchData(with urlRequest: URLRequest) -> Task<APIClient.Response>
@@ -14,6 +17,11 @@ public protocol APIClientNetworkFetcher {
 
 public protocol APIClientDelegate: class {
     func apiClientDidReceiveUnauthorized(forRequest atPath: String, apiClient: APIClient) -> Task<()>?
+    func apiClientDidReceiveError(_ error: Error, forRequest atPath: String, apiClient: APIClient)
+}
+
+public extension APIClientDelegate {
+    func apiClientDidReceiveError(_ error: Error, forRequest atPath: String, apiClient: APIClient) { }
 }
 
 open class APIClient {
@@ -43,10 +51,10 @@ open class APIClient {
     public func perform<T: Decodable>(_ request: Request<T>) -> Task<T> {
         let task: Task<T> =
             createURLRequest(endpoint: request.endpoint)
-                ≈> sendNetworkRequest
-                ≈> request.performUserValidator
-                ≈> validateResponse
-                ≈> parseResponse
+                .andThen(upon: workerQueue) { self.sendNetworkRequest($0) }
+                .andThen(upon: workerQueue) { request.performUserValidator(onResponse: $0) }
+                .andThen(upon: workerQueue) { self.validateResponse($0) }
+                .andThen(upon: workerQueue) { self.parseResponseData($0) }
         return task.fallback(upon: delegateQueue) { (error) in
             return self.attemptToRecoverFrom(error: error, request: request)
         }
@@ -54,7 +62,7 @@ open class APIClient {
 
     public func performSimpleRequest(forEndpoint endpoint: Endpoint) -> Task<APIClient.Response> {
         return createURLRequest(endpoint: endpoint)
-                ≈> sendNetworkRequest
+            .andThen(upon: workerQueue) { self.sendNetworkRequest($0) }
     }
     
     public func addSignature(_ signature: Signature) {
@@ -62,6 +70,10 @@ open class APIClient {
             environment: router.environment,
             signature: signature
         )
+    }
+    
+    public func setUserAgentKind(_ ua: UserAgentKind) {
+        self.router.userAgentKind = ua
     }
 
     public func removeTokenSignature() {
@@ -79,7 +91,6 @@ open class APIClient {
 extension APIClient {
 
     public enum Error: Swift.Error {
-        case serverError
         case malformedURL
         case malformedParameters
         case malformedResponse
@@ -119,6 +130,14 @@ extension APIClient {
         }
     }
     
+    public enum UserAgentKind {
+        case name, appInfo
+        
+        var key: String {
+            return "User-Agent"
+        }
+    }
+    
     public struct Response {
         public let data: Data
         public let httpResponse: HTTPURLResponse
@@ -134,31 +153,39 @@ extension APIClient {
 
 private extension APIClient {
     
-    func sendNetworkRequest(request: URLRequest, fileURL: URL?) -> Task<APIClient.Response> {
-        defer { logRequest(request: request) }
-        if let fileURL = fileURL {
-            let task = self.networkFetcher.uploadFile(with: request, fileURL: fileURL)
+    typealias NetworkRequest = (request: URLRequest, fileURL: URL?)
+    func sendNetworkRequest(_ networkRequest: NetworkRequest) -> Task<APIClient.Response> {
+        defer { logRequest(request: networkRequest.request) }
+        if let fileURL = networkRequest.fileURL {
+            let task = self.networkFetcher.uploadFile(with: networkRequest.request, fileURL: fileURL)
             task.upon(self.workerQueue) { (_) in
                 self.deleteFileAtPath(fileURL: fileURL)
             }
             return task
         } else {
-            return self.networkFetcher.fetchData(with: request)
+            return self.networkFetcher.fetchData(with: networkRequest.request)
         }
     }
 
-    func validateResponse(response: Response) -> Task<Data>.Result {
+    func validateResponse(_ response: Response) -> Task<Data> {
         defer { logResponse(response)}
         switch response.httpResponse.statusCode {
         case (200..<300):
-            return .success(response.data)
+            return .init(success: response.data)
         default:
             let apiError = APIClient.Error.failureStatusCode(response.httpResponse.statusCode, response.data)
-            return .failure(apiError)
+            
+            if let path = response.httpResponse.url?.path {
+                delegateQueue.async {
+                    self.delegate?.apiClientDidReceiveError(apiError, forRequest: path, apiClient: self)
+                }
+            }
+
+            return .init(failure: apiError)
         }
     }
 
-    func parseResponse<T: Decodable>(data: Data) -> Task<T> {
+    func parseResponseData<T: Decodable>(_ data: Data) -> Task<T> {
         return JSONParser.parseData(data)
     }
 
@@ -278,29 +305,20 @@ extension URLSession: APIClientNetworkFetcher {
             self.analyzeResponse(deferred: deferred, data: data, response: response, error: error)
         }
         task.resume()
-        if #available(iOS 11.0, tvOS 11.0, watchOS 4.0, macOS 10.13, *) {
-            return Task(deferred, progress: task.progress)
-        } else {
-            return Task(deferred, uponCancel: { [weak task] in
-                task?.cancel()
-            })
-        }
+        return Task(deferred, progress: task.progress)
     }
 
     public func uploadFile(with urlRequest: URLRequest, fileURL: URL) -> Task<APIClient.Response> {
-        
         let deferred = Deferred<Task<APIClient.Response>.Result>()
-        let task = self.uploadTask(with: urlRequest, fromFile: fileURL) { (data, response, error) in
+        let urlSessionTask = self.uploadTask(with: urlRequest, fromFile: fileURL) { (data, response, error) in
             self.analyzeResponse(deferred: deferred, data: data, response: response, error: error)
         }
-        task.resume()
-        if #available(iOS 11.0, tvOS 11.0, watchOS 4.0, macOS 10.13, *) {
-            return Task(deferred, progress: task.progress)
-        } else {
-            return Task(deferred, uponCancel: { [weak task] in
-                task?.cancel()
-            })
-        }
+        urlSessionTask.resume()
+        let task = Task(deferred, progress: urlSessionTask.progress)
+        #if os(iOS)
+        UIApplication.shared.keepAppAliveUntilTaskCompletes(task)
+        #endif
+        return task
     }
 
     private func analyzeResponse(deferred: Deferred<Task<APIClient.Response>.Result>, data: Data?, response: URLResponse?, error: Error?) {
